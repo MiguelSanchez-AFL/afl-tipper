@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>🏉 AFL Tipper 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Chakra+Petch:wght@400;600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+html,body{
+  min-height:100%;
+  background:#05080F;
+  background-image:
+    radial-gradient(ellipse at 20% 0%,   rgba(202,255,0,0.06)  0%,transparent 50%),
+    radial-gradient(ellipse at 80% 10%,  rgba(0,229,255,0.05)  0%,transparent 45%),
+    radial-gradient(ellipse at 50% 100%, rgba(255,45,120,0.04) 0%,transparent 50%);
+  color:#EAF0FF;
+  font-family:'DM Sans',sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+button{cursor:pointer;border:none;background:none;font-family:inherit;-webkit-tap-highlight-color:transparent}
+input{font-family:inherit;outline:none}
+a{color:#00E5FF}
+
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-thumb{background:#1C2D48;border-radius:2px}
+
+/* ── Animations ── */
+@keyframes spin   {to{transform:rotate(360deg)}}
+@keyframes fadeUp {from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes barGrow{from{width:0}}
+@keyframes pulse  {0%,100%{opacity:1;box-shadow:0 0 8px currentColor}50%{opacity:.5;box-shadow:0 0 2px currentColor}}
+@keyframes glow   {0%,100%{text-shadow:0 0 20px #CAFF0080}50%{text-shadow:0 0 40px #CAFF00,0 0 60px #CAFF0040}}
+
+.spin  {animation:spin .7s linear infinite}
+.fade  {animation:fadeUp .2s ease}
+.bar   {animation:barGrow .8s cubic-bezier(0.16,1,0.3,1)}
+.pulse {animation:pulse 2s ease infinite}
+.glow  {animation:glow 3s ease infinite}
+
+/* ── Card hover ── */
+.card{transition:transform .15s,box-shadow .15s}
+.card:hover{transform:translateY(-1px)}
+
+/* ── Row hover ── */
+.row:hover{background:#0D1830!important}
+
+/* ── Details summary ── */
+details>summary{list-style:none}
+details>summary::-webkit-details-marker{display:none}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+/* ====================================================================
+   AFL TIPPER 2026 — Standalone HTML
+   Automation:
+     • Squiggle API  → fixtures, results, win probabilities (no auth)
+     • The Odds API  → live odds from TAB/Sportsbet/Ladbrokes (free key)
+     • Rolling SC    → auto-calculated from Squiggle results each load
+   Per-round updates needed from Claude chat:
+     • MANUAL_DATA[round] → squad news, match analysis, TAB doubles
+   Hosting: drag file to netlify.com/drop for HTTPS (required for APIs)
+   ==================================================================== */
+
+const {useState,useEffect,useCallback,useMemo,useRef} = React;
+
+/* ── Team name normalisers ─────────────────────────────────────────── */
+const SQ_MAP = {"Adelaide":"Adelaide","Brisbane Lions":"Brisbane Lions","Carlton":"Carlton","Collingwood":"Collingwood","Essendon":"Essendon","Fremantle":"Fremantle","Geelong":"Geelong","Gold Coast":"Gold Coast","Greater Western Sydney":"Greater Western Sydney","GWS Giants":"Greater Western Sydney","Hawthorn":"Hawthorn","Melbourne":"Melbourne","North Melbourne":"North Melbourne","Kangaroos":"North Melbourne","Port Adelaide":"Port Adelaide","Richmond":"Richmond","St Kilda":"St Kilda","Sydney":"Sydney","Sydney Swans":"Sydney","West Coast":"West Coast","West Coast Eagles":"West Coast","Western Bulldogs":"Western Bulldogs","Footscray":"Western Bulldogs"};
+const OQ_MAP = {"Adelaide Crows":"Adelaide","Brisbane Lions":"Brisbane Lions","Carlton Blues":"Carlton","Collingwood Magpies":"Collingwood","Essendon Bombers":"Essendon","Fremantle Dockers":"Fremantle","Geelong Cats":"Geelong","Gold Coast Suns":"Gold Coast","GWS Giants":"Greater Western Sydney","Greater Western Sydney Giants":"Greater Western Sydney","Hawthorn Hawks":"Hawthorn","Melbourne Demons":"Melbourne","North Melbourne Kangaroos":"North Melbourne","Port Adelaide Power":"Port Adelaide","Richmond Tigers":"Richmond","St Kilda Saints":"St Kilda","Sydney Swans":"Sydney","West Coast Eagles":"West Coast","Western Bulldogs":"Western Bulldogs"};
+const sqN = t => SQ_MAP[t] || t;
+const oqN = t => OQ_MAP[t] || SQ_MAP[t] || t;
+
+/* ── Display constants ─────────────────────────────────────────────── */
+const ABBR = {"Adelaide":"ADEL","Brisbane Lions":"BRIS","Carlton":"CARL","Collingwood":"COLL","Essendon":"ESS","Fremantle":"FRE","Geelong":"GEEL","Gold Coast":"GCFC","Greater Western Sydney":"GWS","Hawthorn":"HAW","Melbourne":"MELB","North Melbourne":"NTH","Port Adelaide":"PORT","Richmond":"RICH","St Kilda":"STK","Sydney":"SYD","West Coast":"WCE","Western Bulldogs":"WBD"};
+const TC = {"Adelaide":"#1B4F8A","Brisbane Lions":"#A30046","Carlton":"#0D2C6E","Collingwood":"#555","Essendon":"#CC2031","Fremantle":"#3C2068","Geelong":"#1A3672","Gold Coast":"#D4242C","Greater Western Sydney":"#E8630A","Hawthorn":"#7B3F00","Melbourne":"#CC2031","North Melbourne":"#013B9F","Port Adelaide":"#007A9A","Richmond":"#B89200","St Kilda":"#ED0F05","Sydney":"#CC2031","West Coast":"#002B5C","Western Bulldogs":"#014896"};
+
+/* ── Algorithm constants ───────────────────────────────────────────── */
+const SEASON_BASE = {"Sydney":{pf:116.7,pa:74.2},"Fremantle":{pf:94.0,pa:71.4},"Brisbane Lions":{pf:106.9,pa:85.9},"Geelong":{pf:101.4,pa:84.2},"Gold Coast":{pf:99.4,pa:83.9},"Hawthorn":{pf:100.2,pa:85.8},"St Kilda":{pf:91.7,pa:83.9},"Port Adelaide":{pf:86.1,pa:78.7},"North Melbourne":{pf:95.7,pa:91.7},"Melbourne":{pf:101.1,pa:97.3},"Adelaide":{pf:87.0,pa:85.6},"Collingwood":{pf:81.6,pa:81.7},"Western Bulldogs":{pf:88.2,pa:95.4},"Greater Western Sydney":{pf:85.7,pa:94.0},"Carlton":{pf:80.3,pa:101.3},"Essendon":{pf:82.0,pa:114.2},"Richmond":{pf:64.9,pa:107.7},"West Coast":{pf:69.3,pa:115.3}};
+
+/* Improvement #4 — Venue scoring factors */
+const VF = {"The Gabba":3,"SCG":-3,"MCG":3,"Marvel Stadium":-5,"Adelaide Oval":2,"Optus Stadium":2,"TIO Stadium, Darwin":0,"People First Stadium":-2,"GMHBA Stadium":0,"University of Tasmania Stadium":-2,"Cazalys Stadium":-3};
+
+/* Improvement #5 — Player impact values */
+const PI = {"Patrick Dangerfield":{team:"Geelong",pf:4,pa:0},"Gryan Miers":{team:"Geelong",pf:3,pa:0},"Mark Blicavs":{team:"Geelong",pf:1,pa:-2},"Jack Henry":{team:"Geelong",pf:0,pa:-2},"Matt Rowell":{team:"Gold Coast",pf:5,pa:0},"Tom Barrass":{team:"Hawthorn",pf:0,pa:-3},"Alex Pearce":{team:"Fremantle",pf:0,pa:-3},"Hayden Young":{team:"Fremantle",pf:-4,pa:2},"Corey Wagner":{team:"Fremantle",pf:-2,pa:0},"Jye Caldwell":{team:"Essendon",pf:2,pa:0},"Nasiah Wanganeen-Milera":{team:"St Kilda",pf:-3,pa:0},"Liam Ryan":{team:"St Kilda",pf:-2,pa:0},"Jack Higgins":{team:"St Kilda",pf:2,pa:0},"Tom Brown":{team:"Richmond",pf:-2,pa:0},"Toby Nankervis":{team:"Richmond",pf:0,pa:2},"Darcy Moore":{team:"Collingwood",pf:0,pa:-3},"Scott Pendlebury":{team:"Collingwood",pf:-3,pa:0},"Darcy Cameron":{team:"Collingwood",pf:-1,pa:1},"Charlie Curnow":{team:"Sydney",pf:3,pa:0},"Tom McCartin":{team:"Sydney",pf:0,pa:-2},"Callum Ah Chee":{team:"Adelaide",pf:2,pa:0},"Darcy Fogarty":{team:"Adelaide",pf:2,pa:0},"Dan Turner":{team:"Melbourne",pf:1,pa:0},"Rory Lobb":{team:"Western Bulldogs",pf:0,pa:-2}};
+
+/* ── Algorithm functions ───────────────────────────────────────────── */
+/* Improvement #1 — Rolling weighted SC from Squiggle results */
+const calcRollingSC = (games) => {
+  const byTeam = {};
+  [...games].sort((a,b) => a.round - b.round).forEach(g => {
+    if (g.complete < 100 || !g.hscore || !g.ascore) return;
+    const h = sqN(g.hteam), a = sqN(g.ateam);
+    if (!byTeam[h]) byTeam[h] = [];
+    if (!byTeam[a]) byTeam[a] = [];
+    byTeam[h].push({pf:g.hscore,pa:g.ascore});
+    byTeam[a].push({pf:g.ascore,pa:g.hscore});
+  });
+  const sc = {};
+  Object.keys(SEASON_BASE).forEach(team => {
+    const {pf:spf,pa:spa} = SEASON_BASE[team];
+    const hist = (byTeam[team]||[]).slice(-5);
+    if (hist.length >= 2) {
+      const rpf = hist.reduce((s,g)=>s+g.pf,0)/hist.length;
+      const rpa = hist.reduce((s,g)=>s+g.pa,0)/hist.length;
+      sc[team] = {pf:+(rpf*.6+spf*.4).toFixed(1), pa:+(rpa*.6+spa*.4).toFixed(1), n:hist.length};
+    } else {
+      sc[team] = {...SEASON_BASE[team], n:0};
+    }
+  });
+  return sc;
+};
+
+const injAdj = (team, ins=[], outs=[]) => {
+  let pf=0,pa=0;
+  (ins||[]).forEach(r => { const n=r.split(' (')[0]; const p=PI[n]; if(p&&p.team===team){pf+=p.pf;pa+=p.pa;} });
+  (outs||[]).forEach(r => { const n=r.split(' (')[0]; const p=PI[n]; if(p&&p.team===team){pf-=p.pf;pa-=p.pa;} });
+  return {pf,pa};
+};
+
+const projTotal = (hteam, ateam, venue, weatherAdj=0, hIns=[], hOuts=[], aIns=[], aOuts=[], sc=SEASON_BASE) => {
+  const hs=sc[hteam]||SEASON_BASE[hteam], as=sc[ateam]||SEASON_BASE[ateam];
+  if (!hs||!as) return null;
+  const vf = VF[venue]||0;
+  const hi = injAdj(hteam,hIns,hOuts), ai = injAdj(ateam,aIns,aOuts);
+  const hpf=Math.max(40,hs.pf+hi.pf), hpa=Math.max(40,hs.pa+hi.pa);
+  const apf=Math.max(40,as.pf+ai.pf), apa=Math.max(40,as.pa+ai.pa);
+  return +((hpf+apa+apf+hpa)/2+vf+weatherAdj).toFixed(1);
+};
+
+/* Improvement #2 — Port clutch penalty | Improvement #8 — Hawthorn efficiency bonus */
+const adjProb = (hteam, ateam, base) => {
+  let p = +base;
+  if (hteam==="Port Adelaide"&&p>=55&&p<=75) p=Math.max(p-8,50);
+  if (ateam==="Port Adelaide") { const a=100-p; if(a>=55&&a<=75) p=Math.min(p+8,50); }
+  if (hteam==="Hawthorn"&&p>=40&&p<=70) p=Math.min(p+5,75);
+  if (ateam==="Hawthorn") { const a=100-p; if(a>=40&&a<=70) p=Math.max(p-5,25); }
+  return Math.round(p);
+};
+
+/* ── localStorage helpers ──────────────────────────────────────────── */
+const ls = {
+  get: (k,fb=null) => { try{const v=localStorage.getItem(k);return v!=null?JSON.parse(v):fb;}catch{return fb;} },
+  set: (k,v) => { try{localStorage.setItem(k,JSON.stringify(v));}catch{} },
+};
+
+/* ── Squiggle API ──────────────────────────────────────────────────── */
+const SQ_BASE = 'https://api.squiggle.com.au/';
+// Squiggle fetch with three-tier fallback:
+// 1. Direct fetch (no custom headers — simple CORS request)
+// 2. corsproxy.io (reliable CORS proxy, works from any HTTPS origin)
+// 3. allorigins.win (second proxy fallback)
+const sqFetch = async q => {
+  const url = SQ_BASE + '?' + q;
+  const proxies = [
+    null, // direct
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
+  let lastErr = null;
+  for (const proxyUrl of proxies) {
+    try {
+      const r = await fetch(proxyUrl || url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } catch(e) {
+      lastErr = e;
+    }
+  }
+  throw new Error('Squiggle unavailable — ' + (lastErr?.message||'unknown'));
+};
+const fetchSquiggleGames = async (year=2026) => {
+  const d = await sqFetch(`q=games;year=${year}`);
+  return (d.games||[]).map(g=>({...g, hteam:sqN(g.hteam), ateam:sqN(g.ateam)}));
+};
+const fetchSquiggleTips = async (year=2026, round) => {
+  const d = await sqFetch(`q=tips;year=${year};round=${round};source=squiggle`);
+  return (d.tips||[]).map(t=>({...t, hteam:sqN(t.hteam), ateam:sqN(t.ateam), tip:sqN(t.tip||'')}));
+};
+
+/* ── The Odds API ──────────────────────────────────────────────────── */
+const fetchOddsAPI = async (apiKey) => {
+  // TAB bookmaker key in The Odds API is "tab" for Australian market
+  const url = `https://api.the-odds-api.com/v4/sports/aussierules_afl/odds/?apiKey=${apiKey}&regions=au&markets=h2h,totals&oddsFormat=decimal&bookmakers=tab`;
+  const r = await fetch(url);
+  if (!r.ok) {
+    if (r.status===401||r.status===403) throw new Error('Invalid API key — check at the-odds-api.com');
+    throw new Error('Odds API '+r.status);
+  }
+  const games = await r.json();
+  const out = {};
+  games.forEach(g => {
+    const h=oqN(g.home_team), a=oqN(g.away_team);
+    const bk = {};
+    g.bookmakers.forEach(b => {
+      const h2h = b.markets.find(m=>m.key==='h2h');
+      const tot = b.markets.find(m=>m.key==='totals');
+      if (h2h||tot) {
+        bk[b.key] = {label:b.title.replace(/ AU$/,'').replace(/ Australia$/,'')};
+        if (h2h) {
+          const ho = h2h.outcomes.find(o=>oqN(o.name)===h);
+          const ao = h2h.outcomes.find(o=>oqN(o.name)===a);
+          bk[b.key].h2h = {home:ho?.price, away:ao?.price};
+        }
+        if (tot) {
+          const ov = tot.outcomes.find(o=>o.name==='Over');
+          const un = tot.outcomes.find(o=>o.name==='Under');
+          bk[b.key].totals = {line:ov?.point, over:ov?.price, under:un?.price};
+        }
+      }
+    });
+    out[h+'__'+a] = {bookmakers:bk};
+  });
+  return out;
+};
+
+const getOdds = (data, h, a) => data ? (data[h+'__'+a] || data[a+'__'+h] || null) : null;
+
+// Find TAB bookmaker entry — key is "tab" in The Odds API Australian market
+const getTabBk = (bkObj) => {
+  const entries = Object.entries(bkObj||{});
+  // Try exact key match first, then label match
+  const tab = entries.find(([k,b]) => k==="tab" || b.label?.toLowerCase().includes("tab"));
+  return tab ? tab[1] : null;
+};
+
+const bestPrices = (data, h, a) => {
+  const g = getOdds(data,h,a);
+  if (!g) return null;
+  const tab = getTabBk(g.bookmakers);
+  if (!tab) return null; // Only use TAB data
+  return {
+    bestHome:  tab.h2h?.home    || null,
+    bestAway:  tab.h2h?.away    || null,
+    ouLine:    tab.totals?.line || null,
+    bestOver:  tab.totals?.over  || null,
+    bestUnder: tab.totals?.under || null,
+    bookmakers: g.bookmakers,
+    tabOnly: true,
+  };
+};
+
+/* ── MANUAL_DATA — updated each round via Claude chat ─────────────────
+   Structure per round: { weather, squads, analysis, venueRecord }
+   Everything else is automated from Squiggle + Odds API.
+   ──────────────────────────────────────────────────────────────────── */
+const MANUAL_DATA = {
+  10: {
+    weather: {
+      "Brisbane Lions__Geelong":          {adj:0,  desc:"Fine, 19°C"},
+      "Sydney__Collingwood":              {adj:0,  desc:"Fine, 17°C"},
+      "Gold Coast__Port Adelaide":        {adj:-10,desc:"Hot & muggy, 29°C — Darwin heat"},
+      "Adelaide__North Melbourne":        {adj:-10,desc:"Showers & thunderstorms, 14°C"},
+      "Melbourne__Hawthorn":              {adj:-5, desc:"Cloudy, light showers, 13°C"},
+      "Carlton__Western Bulldogs":        {adj:0,  desc:"Indoor — Marvel Stadium"},
+      "Essendon__Fremantle":              {adj:-5, desc:"Cloudy, light showers, 12°C"},
+      "St Kilda__Richmond":               {adj:0,  desc:"Indoor — Marvel Stadium"},
+      "West Coast__Greater Western Sydney":{adj:0, desc:"Partly cloudy, 18°C Perth"},
+    },
+    squads: {
+      "Brisbane Lions": {ins:["Sam Marshall","Darcy Gardiner"],outs:["Lincoln McCarthy (ham)","Darragh Joyce (omit)"],key:["Lachie Neale","Will Ashcroft"]},
+      "Geelong":        {ins:["Gryan Miers (ACL return)","Mark Blicavs","Jack Henry","Mitch Edwards"],outs:["Rhys Stanley (omit)","Jack Bowes (omit)"],key:["Patrick Dangerfield ✓","Jeremy Cameron"]},
+      "Sydney":         {ins:["Charlie Curnow","Tom McCartin","Jai Serong"],outs:["Dane Rampe (mgd)","Matt Roberts (inj)"],key:["Chad Warner","Isaac Heeney"]},
+      "Collingwood":    {ins:[],outs:["Darcy Moore (inj)","Darcy Cameron (inj)","Scott Pendlebury (mgd)"],key:["Nick Daicos"]},
+      "Gold Coast":     {ins:["Matt Rowell (returns — +5 PF)"],outs:["Jarrod Witts (rested)"],key:["Matt Rowell","Noah Anderson"]},
+      "Port Adelaide":  {ins:["Tom Anastasopoulos (debut)","Ollie Wines (returns)"],outs:["Miles Bergman (big-toe lig.)"],key:["Zak Butters","Jason Horne-Francis"]},
+      "Adelaide":       {ins:["Callum Ah Chee (+2 PF)","Darcy Fogarty (+2 PF)"],outs:[],key:["Izak Rankine","Taylor Walker"]},
+      "North Melbourne":{ins:["George Wardlaw","Jack Darling"],outs:["Tom Powell (inj)"],key:["Harry Sheezel","Luke Davies-Uniacke"]},
+      "Melbourne":      {ins:["Dan Turner (+1 PF)"],outs:[],key:["Clayton Oliver","Bayley Fritsch"]},
+      "Hawthorn":       {ins:[],outs:["Tom Barrass (ham — +3 PA conceded)"],key:["Jai Newcombe","Jack Ginnivan"]},
+      "Carlton":        {ins:["Jack Ison (debut)"],outs:["Adam Saad (inj)"],key:["Patrick Cripps","Sam Walsh"]},
+      "Western Bulldogs":{ins:["Rory Lobb (returns — -2 PA)","Lachlan Emmett","Sam Davidson"],outs:["Tim English (concussion)"],key:["Marcus Bontempelli","Ryley Sanders"]},
+      "Essendon":       {ins:["Jye Caldwell (+2 PF)"],outs:[],key:["Zach Merrett","Andrew McGrath"]},
+      "Fremantle":      {ins:["Oscar McDonald"],outs:["Alex Pearce (MCL — -3 PA)","Hayden Young (inj — -4 PF +2 PA)","Corey Wagner (inj — -2 PF)"],key:["Caleb Serong","Andrew Brayshaw"]},
+      "St Kilda":       {ins:["Jack Higgins (+2 PF)"],outs:["Nasiah Wanganeen-Milera (calf — -3 PF)","Liam Ryan (calf — -2 PF)"],key:["Hugo Garcia","Jack Sinclair"]},
+      "Richmond":       {ins:["Liam Fawcett","Kaleb Smith"],outs:["Tom Brown (forearm — -2 PF)","Toby Nankervis (4-5 wks — +2 PA)"],key:["Tim Taranto","Noah Balta"]},
+      "West Coast":     {ins:["Jack Williams","Bo Allan","Matt Flynn"],outs:["Harry Edwards (inj)"],key:["Harley Reid","Tom McCarthy"]},
+      "Greater Western Sydney":{ins:["Callum Brown","Ryan Angwin"],outs:[],key:["Clayton Oliver ✓","Brent Daniels","Toby Greene"]},
+    },
+    analysis: {
+      "Brisbane Lions__Geelong":  {tip:"Brisbane Lions",text:"RESULT IN: Geelong 117 def Brisbane 76 (41 pts). Projected 188, actual 193 → OVER ✓. Geelong's return of Dangerfield, Miers, Blicavs and Henry was decisive. Rolling averages had correctly flagged Brisbane's defence worsening."},
+      "Sydney__Collingwood":      {tip:"Sydney",text:"Sydney 8-1, 113.7 rolling PF. Collingwood come in without Moore, Cameron and Pendlebury after a 54-point thumping last week. SCG venue factor (-3) applies but Sydney's structural dominance is overwhelming."},
+      "Gold Coast__Port Adelaide":{tip:"Gold Coast",text:"Rowell's return (+5 PF impact) and Gold Coast's Darwin fortress combine to push projection just over the line. Port's rolling defence has worsened to 83.1 PA. Port clutch penalty applied: -8% win prob as moderate favourite. Model flips to OVER after rolling SC update."},
+      "Adelaide__North Melbourne":{tip:"Adelaide",text:"Adelaide Oval fortress (+2 venue). Wet conditions (-10) compress scoring. Ah Chee+Fogarty returns (+4 PF combined). Projection of 173.5 sits comfortably under 177.5. TAB H2H O/U Double: ADE / Under 177.5."},
+      "Melbourne__Hawthorn":      {tip:"Hawthorn",text:"Rolling data is decisive: Melbourne's defence dramatically improved (87.4 rolling PA vs 97.3 season). Hawthorn scoring 106 PF in recent form. Barrass OUT adds +3 conceded. Hawthorn +5% structural efficiency bonus applied. Proj 190.9 — well over 183.5. TAB Double: HAW / Over 183.5."},
+      "Carlton__Western Bulldogs":{tip:"Western Bulldogs",text:"Marvel venue factor (-5) projects 171.8 — 15.7 pts below 187.5. Carlton 2nd-lowest scorers (81.6 rolling PF). WBD defence improved to 88.4 PA in rolling form (vs 95.4 season). Rory Lobb returns (-2 PA). Josh Fraser debut as coach."},
+      "Essendon__Fremantle":      {tip:"Fremantle",text:"Despite losing Pearce, Young and Wagner (-12 PF, +5 PA combined injury impact), injury-adjusted projection of 185.6 still smashes the 161.5 line by 24 pts. Essendon concede 115.6 rolling PA. HIGH confidence OVER."},
+      "St Kilda__Richmond":       {tip:"St Kilda",text:"After injury adjustments (NWM -3, Ryan -2 for STK; Brown -2, Nankervis +2 PA for RIC), projection of 176.2 still clears 157.5 by 18.7 pts. Marvel venue factor (-5) applied. Richmond concede 106.2 rolling PA."},
+      "West Coast__Greater Western Sydney":{tip:"Greater Western Sydney",text:"West Coast concede 115.6 rolling PA. Proj 184.3 obliterates 156.5 by 27.8 pts — biggest O/U gap on the card. Optus Stadium +2 applied. GWS have Clayton Oliver confirmed. HIGHEST confidence OVER."},
+    },
+    venueRecord: {
+      "Brisbane Lions__Geelong":          "BRI: 5-1 last 6 at Gabba. GEE: 8 of 9 Gabba visits covered ATS historically.",
+      "Sydney__Collingwood":              "SYD: 7-1 at SCG in 2025-26. COL: 1-4 at SCG last 5 visits.",
+      "Gold Coast__Port Adelaide":        "GCS: Won 9 straight at TIO Stadium. PORT: 1-5 all-time in Darwin.",
+      "Adelaide__North Melbourne":        "ADE: 12-1 at Adelaide Oval in HA. NTH: 0-13 all-time at Adelaide Oval.",
+      "Melbourne__Hawthorn":              "HAW: Unbeaten in Victoria in 2026 (4-0). MEL: 3-2 at MCG.",
+      "Carlton__Western Bulldogs":        "CAR: 3-5 at Marvel in 2025-26. WBD: 4-2 at Marvel last 6.",
+      "Essendon__Fremantle":              "ESS: 3-2 at MCG. FRE: 2-1 at MCG last 3 visits.",
+      "St Kilda__Richmond":               "STK: 78% win rate in 2nd Marvel game of round. RIC: 1-6 at Marvel last 7.",
+      "West Coast__Greater Western Sydney":"WCE: 3-5 at Optus in 2025-26. GWS: 2-1 at Optus last 3 visits.",
+    },
+    // TAB O/U lines — recorded for direction accuracy tracking (Improvement #6)
+    ouLines: {
+      "Brisbane Lions__Geelong":            182.5,
+      "Sydney__Collingwood":                172.5,
+      "Gold Coast__Port Adelaide":          162.5,
+      "Adelaide__North Melbourne":          177.5,
+      "Melbourne__Hawthorn":                183.5,
+      "Carlton__Western Bulldogs":          187.5,
+      "Essendon__Fremantle":                161.5,
+      "St Kilda__Richmond":                 157.5,
+      "West Coast__Greater Western Sydney": 156.5,
+    }
+  }
+};
+
+
+/* ── STATIC_GAMES — embedded fallback (works offline / local file) ─────
+   Covers all confirmed results through Round 10 G1.
+   Squiggle sync updates this when running on HTTPS.
+   Update alongside MANUAL_DATA each round.                              */
+const STATIC_GAMES = [
+  /* Round 1 */
+  {round:1,hteam:"Carlton",ateam:"Richmond",hscore:75,ascore:71,winner:"Carlton",margin:4,complete:100,venue:"Marvel Stadium",date:"2026-03-12"},
+  {round:1,hteam:"Hawthorn",ateam:"Essendon",hscore:145,ascore:83,winner:"Hawthorn",margin:62,complete:100,venue:"University of Tasmania Stadium",date:"2026-03-13"},
+  {round:1,hteam:"Western Bulldogs",ateam:"Greater Western Sydney",hscore:134,ascore:53,winner:"Western Bulldogs",margin:81,complete:100,venue:"Marvel Stadium",date:"2026-03-14"},
+  {round:1,hteam:"Geelong",ateam:"Fremantle",hscore:110,ascore:100,winner:"Geelong",margin:10,complete:100,venue:"GMHBA Stadium",date:"2026-03-14"},
+  {round:1,hteam:"Sydney",ateam:"Brisbane Lions",hscore:104,ascore:60,winner:"Sydney",margin:44,complete:100,venue:"SCG",date:"2026-03-14"},
+  {round:1,hteam:"Collingwood",ateam:"Adelaide",hscore:79,ascore:93,winner:"Adelaide",margin:14,complete:100,venue:"MCG",date:"2026-03-15"},
+  {round:1,hteam:"North Melbourne",ateam:"Port Adelaide",hscore:113,ascore:67,winner:"North Melbourne",margin:46,complete:100,venue:"Marvel Stadium",date:"2026-03-15"},
+  {round:1,hteam:"Melbourne",ateam:"St Kilda",hscore:120,ascore:107,winner:"Melbourne",margin:13,complete:100,venue:"MCG",date:"2026-03-15"},
+  {round:1,hteam:"Gold Coast",ateam:"West Coast",hscore:131,ascore:72,winner:"Gold Coast",margin:59,complete:100,venue:"People First Stadium",date:"2026-03-15"},
+  /* Round 2 (partial) */
+  {round:2,hteam:"Hawthorn",ateam:"Sydney",hscore:99,ascore:82,winner:"Hawthorn",margin:17,complete:100,venue:"MCG",date:"2026-03-19"},
+  {round:2,hteam:"Western Bulldogs",ateam:"Adelaide",hscore:94,ascore:88,winner:"Western Bulldogs",margin:6,complete:100,venue:"Marvel Stadium",date:"2026-03-20"},
+  {round:2,hteam:"Gold Coast",ateam:"Richmond",hscore:128,ascore:60,winner:"Gold Coast",margin:68,complete:100,venue:"People First Stadium",date:"2026-03-20"},
+  {round:2,hteam:"St Kilda",ateam:"Greater Western Sydney",hscore:78,ascore:74,winner:"St Kilda",margin:4,complete:100,venue:"Marvel Stadium",date:"2026-03-21"},
+  {round:2,hteam:"Fremantle",ateam:"Melbourne",hscore:118,ascore:70,winner:"Fremantle",margin:48,complete:100,venue:"Optus Stadium",date:"2026-03-21"},
+  {round:2,hteam:"Port Adelaide",ateam:"Essendon",hscore:133,ascore:70,winner:"Port Adelaide",margin:63,complete:100,venue:"Adelaide Oval",date:"2026-03-22"},
+  {round:2,hteam:"West Coast",ateam:"North Melbourne",hscore:111,ascore:94,winner:"West Coast",margin:17,complete:100,venue:"Optus Stadium",date:"2026-03-22"},
+  /* Round 3 */
+  {round:3,hteam:"Geelong",ateam:"Adelaide",hscore:68,ascore:60,winner:"Geelong",margin:8,complete:100,venue:"GMHBA Stadium",date:"2026-03-26"},
+  {round:3,hteam:"Collingwood",ateam:"Greater Western Sydney",hscore:87,ascore:54,winner:"Collingwood",margin:33,complete:100,venue:"MCG",date:"2026-03-27"},
+  {round:3,hteam:"St Kilda",ateam:"Brisbane Lions",hscore:80,ascore:113,winner:"Brisbane Lions",margin:33,complete:100,venue:"Marvel Stadium",date:"2026-03-27"},
+  {round:3,hteam:"Fremantle",ateam:"Richmond",hscore:103,ascore:43,winner:"Fremantle",margin:60,complete:100,venue:"Optus Stadium",date:"2026-03-28"},
+  {round:3,hteam:"North Melbourne",ateam:"Essendon",hscore:81,ascore:69,winner:"North Melbourne",margin:12,complete:100,venue:"Marvel Stadium",date:"2026-03-28"},
+  {round:3,hteam:"West Coast",ateam:"Port Adelaide",hscore:92,ascore:90,winner:"West Coast",margin:2,complete:100,venue:"Optus Stadium",date:"2026-03-29"},
+  {round:3,hteam:"Carlton",ateam:"Melbourne",hscore:77,ascore:100,winner:"Melbourne",margin:23,complete:100,venue:"MCG",date:"2026-03-29"},
+  /* Round 4 — Gather Round (partial) */
+  {round:4,hteam:"Brisbane Lions",ateam:"Collingwood",hscore:119,ascore:65,winner:"Brisbane Lions",margin:54,complete:100,venue:"Adelaide Oval",date:"2026-04-02"},
+  {round:4,hteam:"North Melbourne",ateam:"Carlton",hscore:96,ascore:86,winner:"North Melbourne",margin:10,complete:100,venue:"Adelaide Oval",date:"2026-04-05"},
+  /* Round 6 (partial) */
+  {round:6,hteam:"Carlton",ateam:"Collingwood",hscore:83,ascore:88,winner:"Collingwood",margin:5,complete:100,venue:"MCG",date:"2026-04-16"},
+  {round:6,hteam:"Geelong",ateam:"Western Bulldogs",hscore:131,ascore:56,winner:"Geelong",margin:75,complete:100,venue:"GMHBA Stadium",date:"2026-04-17"},
+  {round:6,hteam:"Sydney",ateam:"Greater Western Sydney",hscore:107,ascore:66,winner:"Sydney",margin:41,complete:100,venue:"SCG",date:"2026-04-18"},
+  {round:6,hteam:"Gold Coast",ateam:"Essendon",hscore:119,ascore:110,winner:"Gold Coast",margin:9,complete:100,venue:"People First Stadium",date:"2026-04-19"},
+  {round:6,hteam:"Hawthorn",ateam:"Port Adelaide",hscore:89,ascore:86,winner:"Hawthorn",margin:3,complete:100,venue:"MCG",date:"2026-04-19"},
+  /* Round 7 — Anzac Appeal */
+  {round:7,hteam:"Western Bulldogs",ateam:"Sydney",hscore:60,ascore:126,winner:"Sydney",margin:66,complete:100,venue:"Marvel Stadium",date:"2026-04-23"},
+  {round:7,hteam:"Richmond",ateam:"Melbourne",hscore:72,ascore:126,winner:"Melbourne",margin:54,complete:100,venue:"MCG",date:"2026-04-24"},
+  {round:7,hteam:"Hawthorn",ateam:"Gold Coast",hscore:112,ascore:63,winner:"Hawthorn",margin:49,complete:100,venue:"MCG",date:"2026-04-25"},
+  {round:7,hteam:"Essendon",ateam:"Collingwood",hscore:60,ascore:137,winner:"Collingwood",margin:77,complete:100,venue:"MCG",date:"2026-04-25"},
+  {round:7,hteam:"Port Adelaide",ateam:"Geelong",hscore:95,ascore:65,winner:"Port Adelaide",margin:30,complete:100,venue:"Adelaide Oval",date:"2026-04-26"},
+  {round:7,hteam:"Fremantle",ateam:"Carlton",hscore:103,ascore:89,winner:"Fremantle",margin:14,complete:100,venue:"Optus Stadium",date:"2026-04-26"},
+  {round:7,hteam:"St Kilda",ateam:"West Coast",hscore:143,ascore:42,winner:"St Kilda",margin:101,complete:100,venue:"Marvel Stadium",date:"2026-04-26"},
+  {round:7,hteam:"Brisbane Lions",ateam:"Adelaide",hscore:127,ascore:75,winner:"Brisbane Lions",margin:52,complete:100,venue:"The Gabba",date:"2026-04-27"},
+  {round:7,hteam:"Greater Western Sydney",ateam:"North Melbourne",hscore:105,ascore:98,winner:"Greater Western Sydney",margin:7,complete:100,venue:"GIANTS Stadium",date:"2026-04-27"},
+  /* Round 8 (partial) */
+  {round:8,hteam:"Brisbane Lions",ateam:"Essendon",hscore:148,ascore:84,winner:"Brisbane Lions",margin:64,complete:100,venue:"The Gabba",date:"2026-05-01"},
+  /* Round 9 */
+  {round:9,hteam:"Fremantle",ateam:"Hawthorn",hscore:88,ascore:73,winner:"Fremantle",margin:15,complete:100,venue:"Optus Stadium",date:"2026-05-07"},
+  {round:9,hteam:"Brisbane Lions",ateam:"Carlton",hscore:100,ascore:89,winner:"Brisbane Lions",margin:11,complete:100,venue:"The Gabba",date:"2026-05-08"},
+  {round:9,hteam:"Port Adelaide",ateam:"Western Bulldogs",hscore:72,ascore:74,winner:"Western Bulldogs",margin:2,complete:100,venue:"Adelaide Oval",date:"2026-05-09"},
+  {round:9,hteam:"North Melbourne",ateam:"Sydney",hscore:97,ascore:105,winner:"Sydney",margin:8,complete:100,venue:"Marvel Stadium",date:"2026-05-09"},
+  {round:9,hteam:"Greater Western Sydney",ateam:"Essendon",hscore:103,ascore:89,winner:"Greater Western Sydney",margin:14,complete:100,venue:"GIANTS Stadium",date:"2026-05-10"},
+  {round:9,hteam:"Gold Coast",ateam:"St Kilda",hscore:89,ascore:60,winner:"Gold Coast",margin:29,complete:100,venue:"People First Stadium",date:"2026-05-10"},
+  {round:9,hteam:"Geelong",ateam:"Collingwood",hscore:122,ascore:68,winner:"Geelong",margin:54,complete:100,venue:"MCG",date:"2026-05-10"},
+  {round:9,hteam:"Melbourne",ateam:"West Coast",hscore:99,ascore:67,winner:"Melbourne",margin:32,complete:100,venue:"MCG",date:"2026-05-10"},
+  {round:9,hteam:"Richmond",ateam:"Adelaide",hscore:80,ascore:117,winner:"Adelaide",margin:37,complete:100,venue:"MCG",date:"2026-05-11"},
+  /* Round 10 — G1 complete, G2-G9 upcoming */
+  {round:10,hteam:"Brisbane Lions",ateam:"Geelong",hscore:76,ascore:117,winner:"Geelong",margin:41,complete:100,venue:"The Gabba",date:"2026-05-14"},
+  {round:10,hteam:"Sydney",ateam:"Collingwood",hscore:81,ascore:75,winner:"Sydney",margin:6,complete:100,venue:"SCG",date:"2026-05-15"},
+  {round:10,hteam:"Gold Coast",ateam:"Port Adelaide",hscore:98,ascore:73,winner:"Gold Coast",margin:25,complete:100,venue:"TIO Stadium, Darwin",date:"2026-05-15"},
+  {round:10,hteam:"Adelaide",ateam:"North Melbourne",hscore:133,ascore:65,winner:"Adelaide",margin:68,complete:100,venue:"Adelaide Oval",date:"2026-05-16"},
+  {round:10,hteam:"Melbourne",ateam:"Hawthorn",hscore:120,ascore:81,winner:"Melbourne",margin:39,complete:100,venue:"MCG",date:"2026-05-16"},
+  {round:10,hteam:"Carlton",ateam:"Western Bulldogs",hscore:0,ascore:0,winner:null,margin:null,complete:0,venue:"Marvel Stadium",date:"2026-05-16"},
+  {round:10,hteam:"Essendon",ateam:"Fremantle",hscore:0,ascore:0,winner:null,margin:null,complete:0,venue:"MCG",date:"2026-05-17"},
+  {round:10,hteam:"St Kilda",ateam:"Richmond",hscore:0,ascore:0,winner:null,margin:null,complete:0,venue:"Marvel Stadium",date:"2026-05-17"},
+  {round:10,hteam:"West Coast",ateam:"Greater Western Sydney",hscore:0,ascore:0,winner:null,margin:null,complete:0,venue:"Optus Stadium",date:"2026-05-17"},
+];
+
+const mk = (h,a) => h+'__'+a;
+
+/* ── Shared UI components ──────────────────────────────────────────── */
+const BD = {fontFamily:"'Bebas Neue',sans-serif"};
+const M  = {fontFamily:"'Chakra Petch',sans-serif"};
+const S  = {fontFamily:"'DM Sans',sans-serif"};
+
+const Spinner = ({size=14,col="#CAFF00"}) => (
+  <div style={{display:"inline-block",width:size,height:size,borderRadius:"50%",border:"2px solid #1C2D48",borderTopColor:col,animation:"spin .7s linear infinite"}}/>
+);
+const Pill = ({label,col="#3D5878"}) => (
+  <span style={{...M,fontSize:9,color:col,background:col+"22",border:`1px solid ${col}60`,padding:"2px 9px",borderRadius:20,letterSpacing:"0.1em",whiteSpace:"nowrap",boxShadow:`0 0 8px ${col}30`,fontWeight:600}}>{label}</span>
+);
+const AccBar = ({pct,label}) => {
+  const c = pct==null?"#3D5878":pct>=80?"#CAFF00":pct>=65?"#FFC300":"#FF3D3D";
+  const glow = pct==null?"none":pct>=80?"0 0 10px #CAFF0060":pct>=65?"0 0 10px #FFC30060":"0 0 10px #FF3D3D60";
+  return(<div style={{marginBottom:10}}>
+    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+      <span style={{...S,fontSize:11,color:"#7A96BA"}}>{label}</span>
+      <span style={{...M,fontSize:12,fontWeight:700,color:c,textShadow:glow}}>{pct!=null?pct+"%":"—"}</span>
+    </div>
+    <div style={{height:6,background:"#0C1525",borderRadius:3,overflow:"hidden",border:"1px solid #1C2D48"}}>
+      {pct!=null && <div className="bar" style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${c}CC,${c})`,borderRadius:3,boxShadow:glow}}/>}
+    </div>
+  </div>);
+};
+const Acc = ({label,color="#7A96BA",children,open:def=false}) => {
+  const [o,setO] = useState(def);
+  return(<div style={{borderTop:"1px solid #1C2D4850"}}>
+    <button onClick={()=>setO(x=>!x)} style={{width:"100%",padding:"11px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",background:o?color+"08":"transparent",transition:"background .2s"}}>
+      <span style={{...M,fontSize:11,fontWeight:700,color,letterSpacing:"0.1em",textShadow:o?`0 0 12px ${color}50`:"none"}}>{label}</span>
+      <span style={{...M,fontSize:10,color:o?color:"#3D5878",transition:"color .2s"}}>{o?"▲":"▼"}</span>
+    </button>
+    {o && <div className="fade" style={{padding:"0 16px 16px"}}>{children}</div>}
+  </div>);
+};
+
+/* ── Odds panel component ──────────────────────────────────────────── */
+const OddsPanel = ({h,a,oddsData}) => {
+  const bp = bestPrices(oddsData,h,a);
+  const g = getOdds(oddsData,h,a);
+  if (!bp&&!g) return null;
+  const bks = g ? Object.entries(g.bookmakers||{}) : [];
+  return(<div style={{marginTop:10,padding:"10px 12px",background:"#080C10",border:"1px solid #CAFF0030",borderRadius:8}}>
+    <div style={{...M,fontSize:10,color:"#CAFF00",letterSpacing:"0.08em",marginBottom:8}}>🔴 LIVE ODDS</div>
+    <div style={{display:"flex",gap:8,marginBottom:bp?.ouLine?8:0}}>
+      <div style={{flex:1,background:"#080D1A",border:"1px solid #1C2D48",borderRadius:7,padding:"8px",textAlign:"center"}}>
+        <div style={{...M,fontSize:9,color:"#3D5878",marginBottom:3}}>{ABBR[h]||h} WIN</div>
+        <div style={{...M,fontSize:20,fontWeight:700,color:"#CAFF00"}}>${bp?.bestHome?.toFixed(2)||"—"}</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center"}}><span style={{...M,fontSize:10,color:"#3D5878"}}>VS</span></div>
+      <div style={{flex:1,background:"#080D1A",border:"1px solid #1C2D48",borderRadius:7,padding:"8px",textAlign:"center"}}>
+        <div style={{...M,fontSize:9,color:"#3D5878",marginBottom:3}}>{ABBR[a]||a} WIN</div>
+        <div style={{...M,fontSize:20,fontWeight:700,color:"#7A96BA"}}>${bp?.bestAway?.toFixed(2)||"—"}</div>
+      </div>
+    </div>
+    {bp?.ouLine && <div style={{display:"flex",gap:8,marginBottom:6}}>
+      <div style={{flex:1,background:"#080D1A",border:"1px solid #FFC30030",borderRadius:7,padding:"6px 8px",textAlign:"center"}}>
+        <div style={{...M,fontSize:9,color:"#3D5878",marginBottom:2}}>OVER {bp.ouLine}</div>
+        <div style={{...M,fontSize:15,fontWeight:700,color:"#FFC300"}}>${bp.bestOver?.toFixed(2)||"—"}</div>
+      </div>
+      <div style={{flex:1,background:"#080D1A",border:"1px solid #00E5FF30",borderRadius:7,padding:"6px 8px",textAlign:"center"}}>
+        <div style={{...M,fontSize:9,color:"#3D5878",marginBottom:2}}>UNDER {bp.ouLine}</div>
+        <div style={{...M,fontSize:15,fontWeight:700,color:"#00E5FF"}}>${bp.bestUnder?.toFixed(2)||"—"}</div>
+      </div>
+    </div>}
+    
+  </div>);
+};
+
+/* ── Game Card ─────────────────────────────────────────────────────── */
+const GameCard = ({game, round, sc, oddsData, sqTip}) => {
+  const {hteam,ateam,venue,date,complete,hscore,ascore,winner,margin} = game;
+  const key = mk(hteam,ateam);
+  const rd = MANUAL_DATA[round] || {};
+  const wx = (rd.weather||{})[key] || {adj:0,desc:"—"};
+  const hSq = (rd.squads||{})[hteam] || {ins:[],outs:[],key:[]};
+  const aSq = (rd.squads||{})[ateam] || {ins:[],outs:[],key:[]};
+  const ana = (rd.analysis||{})[key] || null;
+  const vRec = (rd.venueRecord||{})[key] || "";
+
+  // Win probability: Squiggle → Odds API implied → base 50
+  const bp = bestPrices(oddsData,hteam,ateam);
+  let hProb = 50;
+  if (sqTip) hProb = Math.round(sqTip.hconfidence||50);
+  else if (bp?.bestHome && bp?.bestAway) {
+    const p=1/bp.bestHome, q=1/bp.bestAway;
+    hProb = Math.round(p/(p+q)*100);
+  }
+  const adjH = adjProb(hteam,ateam,hProb);
+  const adjA = 100-adjH;
+  const favP = Math.max(adjH,adjA);
+  const confStr = favP>=80?"CLEAR":favP>=65?"MOD":"CLOSE";
+  const confCol = confStr==="CLEAR"?"#CAFF00":confStr==="MOD"?"#FFC300":"#3D5878";
+
+  // O/U: live line from Odds API, else fallback
+  const ouLine = bp?.ouLine || null;
+  const p = projTotal(hteam,ateam,venue,wx.adj,hSq.ins,hSq.outs,aSq.ins,aSq.outs,sc);
+  const ouTip = p&&ouLine ? (p>ouLine?"OVER":"UNDER") : null;
+  const ouCol = ouTip==="OVER"?"#FFC300":"#00E5FF";
+  const gap = p&&ouLine ? (p-ouLine).toFixed(1) : null;
+  const ouConfStr = gap?Math.abs(+gap)>=15?"HIGH":Math.abs(+gap)>=8?"MOD":"SLIM":null;
+  const ouConfCol = ouConfStr==="HIGH"?"#CAFF00":ouConfStr==="MOD"?"#FFC300":"#3D5878";
+
+  const hs = sc[hteam]||SEASON_BASE[hteam];
+  const as = sc[ateam]||SEASON_BASE[ateam];
+  const hi = injAdj(hteam,hSq.ins,hSq.outs);
+  const ai = injAdj(ateam,aSq.ins,aSq.outs);
+  const vf = VF[venue]||0;
+  const done = complete===100;
+
+  const hcol = TC[hteam]||"#334155";
+  const acol = TC[ateam]||"#334155";
+  return(<div style={{background:"#0C1525",border:`1px solid ${hcol}40`,borderRadius:16,marginBottom:16,overflow:"hidden",boxShadow:`0 4px 24px ${hcol}15`}}>
+    {/* Header bar — team colour gradient */}
+    <div style={{background:`linear-gradient(90deg,${hcol}30 0%,${hcol}08 40%,${acol}08 60%,${acol}30 100%)`,borderBottom:`1px solid #1C2D48`,padding:"8px 16px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:4}}>
+      <span style={{...M,fontSize:10,color:"#3D5878",letterSpacing:"0.06em"}}>{date}</span>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{...S,fontSize:10,color:"#3D5878"}}>{venue}</span>
+        {done && <Pill label="FULL TIME" col="#7A96BA"/>}
+      </div>
+    </div>
+    {/* Teams */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 44px 1fr",padding:"14px 14px 4px"}}>
+      {[{t:hteam,s:hs,inj:hi,score:done?hscore:null,won:done&&winner===hteam},
+        {t:ateam,s:as,inj:ai,score:done?ascore:null,won:done&&winner===ateam}].reduce((acc,{t,s,inj,score,won},idx) => {
+        const col = TC[t]||"#1C2D48";
+        const el = (<div key={t} style={{textAlign:"center"}}>
+          <div style={{display:"inline-block",background:col+"28",border:`1px solid ${col}50`,borderRadius:5,padding:"1px 7px",marginBottom:5}}>
+            <span style={{...M,fontSize:9,color:"#7A96BA",letterSpacing:"0.1em"}}>{idx===0?"HOME":"AWAY"}</span>
+          </div>
+          <div style={{...BD,fontSize:32,lineHeight:1,letterSpacing:"0.04em",color:won?"#CAFF00":done?"#3D5878":"#EAF0FF",textShadow:won?"0 0 20px #CAFF0060":"none"}}>{ABBR[t]||t}</div>
+          <div style={{...S,fontSize:10,color:"#3D5878",marginTop:1}}>{t}</div>
+          {score!=null && <div style={{...BD,fontSize:52,lineHeight:1,color:won?"#CAFF00":"#3D5878",marginTop:4,textShadow:won?"0 0 30px #CAFF0050":"none"}}>{score}</div>}
+          {s && !done && <div style={{display:"flex",justifyContent:"center",gap:10,marginTop:6}}>
+            <span style={{...M,fontSize:10,color:"#00FF9D",background:"#00FF9D15",padding:"2px 8px",borderRadius:20,border:"1px solid #00FF9D30"}}>▲{+(s.pf+inj.pf).toFixed(1)}</span>
+            <span style={{...M,fontSize:10,color:"#FF3D3D",background:"#FF3D3D15",padding:"2px 8px",borderRadius:20,border:"1px solid #FF3D3D30"}}>▼{+(s.pa+inj.pa).toFixed(1)}</span>
+          </div>}
+        </div>);
+        if (idx===0) return [...acc,el,
+          <div key="vs" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}>
+            <span style={{...M,fontSize:12,color:"#3D5878",fontWeight:700}}>VS</span>
+            {done&&margin!=null&&<span style={{...M,fontSize:10,color:"#3D5878"}}>+{margin}</span>}
+          </div>];
+        return [...acc,el];
+      },[])}
+    </div>
+    {!done && <div style={{...S,padding:"2px 14px 6px",textAlign:"center",fontSize:9,color:"#3D5878"}}>▲ adj score  ▼ adj concede — rolling weighted avg{hs?.n?` (${hs.n}g)`:""}</div>}
+    {/* Prob bar */}
+    {!done && <div style={{padding:"6px 16px 8px"}}>
+      <div style={{display:"flex",height:8,borderRadius:4,overflow:"hidden",border:"1px solid #1C2D48",boxShadow:"inset 0 1px 4px #00000060"}}>
+        <div style={{width:adjH+"%",background:TC[hteam]||"#334155",boxShadow:`2px 0 12px ${TC[hteam]||"#334155"}80`,transition:"width .6s ease"}}/>
+        <div style={{flex:1,background:TC[ateam]||"#334155",boxShadow:`-2px 0 12px ${TC[ateam]||"#334155"}80`}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:5}}>
+        <span style={{...M,fontSize:11,fontWeight:700,color:"#EAF0FF"}}>{adjH}<span style={{fontSize:9,color:"#3D5878"}}>%</span></span>
+        <span style={{...M,fontSize:8,color:"#3D5878",letterSpacing:"0.12em"}}>ADJ WIN PROBABILITY</span>
+        <span style={{...M,fontSize:11,fontWeight:700,color:"#EAF0FF"}}>{adjA}<span style={{fontSize:9,color:"#3D5878"}}>%</span></span>
+      </div>
+    </div>}
+    {/* Quick info */}
+    {!done && <div style={{padding:"6px 14px 8px",display:"flex",gap:6,borderTop:"1px solid #1C2D48",flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"center",gap:5,background:"#080D1A",border:"1px solid #1C2D48",borderRadius:7,padding:"5px 10px",flex:1}}>
+        <span style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.05em"}}>CONF</span>
+        <span style={{...M,fontSize:11,color:confCol,fontWeight:700,marginLeft:4}}>{confStr}</span>
+        {sqTip&&<span style={{...M,fontSize:8,color:"#3D5878",marginLeft:"auto"}}>via squiggle</span>}
+        {bp&&!sqTip&&<span style={{...M,fontSize:8,color:"#3D5878",marginLeft:"auto"}}>via odds</span>}
+      </div>
+      {ouLine&&p&&<div style={{display:"flex",alignItems:"center",gap:5,background:"#080D1A",border:"1px solid #1C2D48",borderRadius:7,padding:"5px 10px",flex:2}}>
+        <span style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.05em"}}>O/U</span>
+        <span style={{...M,fontSize:12,fontWeight:700,color:"#EAF0FF",marginLeft:4}}>{ouLine}</span>
+        <span style={{...M,fontSize:11,fontWeight:700,color:ouCol,marginLeft:4,background:ouCol+"18",border:`1px solid ${ouCol}40`,padding:"1px 6px",borderRadius:6}}>{ouTip}</span>
+        <span style={{...M,fontSize:9,color:"#3D5878",marginLeft:3}}>proj {p}</span>
+        {ouConfStr&&<Pill label={ouConfStr} col={ouConfCol}/>}
+      </div>}
+    </div>}
+    {/* Tip + analysis */}
+    <Acc label="⚡ MATCH TIP + O/U ANALYSIS" color="#CAFF00">
+      {ana ? (<>
+        <p style={{...S,fontSize:12,color:"#7A96BA",lineHeight:1.7,marginBottom:8}}>{ana.text}</p>
+        {ana.tip&&!done&&<div style={{marginBottom:10,padding:"12px 16px",borderRadius:12,background:"linear-gradient(135deg,#CAFF0018,#80FF0010)",border:"1px solid #CAFF0050",boxShadow:"0 0 20px #CAFF0020",display:"flex",alignItems:"center",gap:10}}>
+          <span style={{...BD,fontSize:28,color:"#CAFF00",textShadow:"0 0 20px #CAFF0080",letterSpacing:"0.06em"}}>✓ {ana.tip.toUpperCase()}</span>
+        </div>}
+        {p&&<div style={{padding:"10px 12px",borderRadius:7,background:"#080D1A",border:"1px solid #1C2D48",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <div>
+              <div style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.06em",marginBottom:3}}>O/U {ouLine||"—"} · ALGORITHM</div>
+              {ouTip&&<div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{...M,fontSize:14,fontWeight:700,color:ouCol}}>{ouTip} {ouLine}</span>
+                {ouConfStr&&<Pill label={ouConfStr} col={ouConfCol}/>}
+              </div>}
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{...M,fontSize:9,color:"#3D5878"}}>PROJECTED</div>
+              <div style={{...M,fontSize:18,fontWeight:700,color:gap&&+gap>0?"#FFC300":"#00E5FF"}}>{p}</div>
+              {gap&&<div style={{...M,fontSize:9,color:"#3D5878"}}>{+gap>=0?"+":""}{gap} vs line</div>}
+            </div>
+          </div>
+          <div style={{...S,fontSize:10,color:"#3D5878"}}>
+            Rolling SC{vf!==0?` ${vf>0?"+":""}${vf} ${venue.split(',')[0].split(' ').slice(-1)[0]} venue`:""}{wx.adj!==0?` ${wx.adj} weather`:""}
+            {hi.pf!==0||hi.pa!==0?` | ${hteam.split(' ').slice(-1)[0]} inj adj (pf${hi.pf>=0?"+":""}${hi.pf} pa${hi.pa>=0?"+":""}${hi.pa})`:""}
+            {ai.pf!==0||ai.pa!==0?` | ${ateam.split(' ').slice(-1)[0]} inj adj (pf${ai.pf>=0?"+":""}${ai.pf} pa${ai.pa>=0?"+":""}${ai.pa})`:""}
+          </div>
+        </div>}
+        {(()=>{
+          // Auto-generate the double from algorithm tip + O/U call
+          const tipTeam  = ana?.tip;
+          const isHome   = tipTeam === hteam;
+          const tipOdds  = tipTeam ? (isHome ? bp?.bestHome : bp?.bestAway) : null;
+          const ouOdds   = ouTip==="OVER" ? bp?.bestOver : bp?.bestUnder;
+          const combined = tipOdds && ouOdds ? (tipOdds * ouOdds).toFixed(2) : null;
+
+          if (!tipTeam || !ouTip || !ouLine || done) return null;
+
+          // Two legs: team to win + O/U direction
+          const legs = [
+            {label:`${tipTeam} to win`, odds:tipOdds?`$${tipOdds.toFixed(2)}`:null},
+            {label:`${ouTip} ${ouLine}`, odds:ouOdds?`$${ouOdds.toFixed(2)}`:null},
+          ];
+          return(<div style={{padding:"12px 14px",borderRadius:12,background:"linear-gradient(135deg,#CAFF0010,#080D1A)",border:"1px solid #CAFF0040",marginBottom:10,boxShadow:"0 0 16px #CAFF0015"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div style={{...BD,fontSize:18,color:"#CAFF00",letterSpacing:"0.12em",textShadow:"0 0 12px #CAFF0060"}}>★ TAB H2H O/U DOUBLE</div>
+              {combined&&<div style={{textAlign:"right"}}>
+                <div style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.06em"}}>COMBINED PRICE</div>
+                <div style={{...BD,fontSize:22,color:"#CAFF00",textShadow:"0 0 16px #CAFF0060"}}>${combined}</div>
+              </div>}
+            </div>
+            {/* Leg 1: H2H tip */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderRadius:8,marginBottom:6,background:"#CAFF0012",border:"1px solid #CAFF0040"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{...M,fontSize:9,color:"#CAFF00",background:"#CAFF0020",padding:"1px 7px",borderRadius:20,letterSpacing:"0.08em"}}>H2H</span>
+                <span style={{...S,fontSize:13,color:"#EAF0FF",fontWeight:600}}>{legs[0].label}</span>
+              </div>
+              {legs[0].odds
+                ?<span style={{...BD,fontSize:24,color:"#CAFF00",textShadow:"0 0 12px #CAFF0050"}}>{legs[0].odds}</span>
+                :<span style={{...M,fontSize:10,color:"#3D5878"}}>add TAB key</span>}
+            </div>
+            {/* Leg 2: O/U tip */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderRadius:8,background:"#CAFF0012",border:"1px solid #CAFF0040"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{...M,fontSize:9,color:"#FFC300",background:"#FFC30020",padding:"1px 7px",borderRadius:20,letterSpacing:"0.08em"}}>O/U</span>
+                <span style={{...S,fontSize:13,color:"#EAF0FF",fontWeight:600}}>{legs[1].label}</span>
+              </div>
+              {legs[1].odds
+                ?<span style={{...BD,fontSize:24,color:"#FFC300",textShadow:"0 0 12px #FFC30050"}}>{legs[1].odds}</span>
+                :<span style={{...M,fontSize:10,color:"#3D5878"}}>add TAB key</span>}
+            </div>
+            {!bp&&<div style={{...M,fontSize:9,color:"#3D5878",marginTop:4,textAlign:"center",letterSpacing:"0.06em"}}>ADD ODDS API KEY IN SETTINGS FOR LIVE PRICES</div>}
+          </div>);
+        })()}
+        <OddsPanel h={hteam} a={ateam} oddsData={oddsData}/>
+      </>) : (<div style={{...S,color:"#3D5878",fontSize:12,paddingBottom:4}}>
+        Analysis for this round not yet loaded. Update via Claude chat.
+        <OddsPanel h={hteam} a={ateam} oddsData={oddsData}/>
+      </div>)}
+    </Acc>
+    {/* Squad news */}
+    <Acc label="👥 SQUAD NEWS" color="#FF2D78">
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:4}}>
+        {[[hteam,hSq],[ateam,aSq]].map(([t,sq])=>(
+          <div key={t}>
+            <div style={{...M,fontSize:10,fontWeight:700,color:TC[t]||"#7A96BA",letterSpacing:"0.08em",marginBottom:5}}>{ABBR[t]||t}</div>
+            {sq.ins?.length>0&&<div style={{marginBottom:5}}><div style={{...M,fontSize:9,color:"#00FF9D",marginBottom:2}}>▲ IN</div>{sq.ins.map((x,i)=><div key={i} style={{...S,fontSize:11,color:"#B0FFF0",lineHeight:1.5}}>· {x}</div>)}</div>}
+            {sq.outs?.length>0&&<div style={{marginBottom:5}}><div style={{...M,fontSize:9,color:"#FF3D3D",marginBottom:2}}>▼ OUT</div>{sq.outs.map((x,i)=><div key={i} style={{...S,fontSize:11,color:"#FFB0A0",lineHeight:1.5}}>· {x}</div>)}</div>}
+            {sq.key?.length>0&&<div><div style={{...M,fontSize:9,color:"#FFC300",marginBottom:2}}>★ KEY</div>{sq.key.map((x,i)=><div key={i} style={{...S,fontSize:11,color:"#FFE580",lineHeight:1.5}}>· {x}</div>)}</div>}
+            {!sq.ins?.length&&!sq.outs?.length&&!sq.key?.length&&<div style={{...S,fontSize:11,color:"#3D5878"}}>Not yet available — update via Claude</div>}
+          </div>
+        ))}
+      </div>
+    </Acc>
+    {/* Match intel */}
+    <Acc label="📍 MATCH INTEL" color="#00CFFF">
+      <div style={{display:"flex",flexDirection:"column",gap:7,marginTop:4}}>
+        {wx.desc!=="—"&&<div style={{padding:"7px 10px",background:"#080D1A",borderRadius:6,border:"1px solid #1C2D48"}}>
+          <div style={{...M,fontSize:9,color:"#00CFFF",letterSpacing:"0.08em",marginBottom:3}}>🌤 WEATHER</div>
+          <p style={{...S,fontSize:11,color:"#7A96BA"}}>{wx.desc}</p>
+        </div>}
+        {vRec&&<div style={{padding:"7px 10px",background:"#080D1A",borderRadius:6,border:"1px solid #1C2D48"}}>
+          <div style={{...M,fontSize:9,color:"#00CFFF",letterSpacing:"0.08em",marginBottom:3}}>🏟 VENUE RECORD</div>
+          <p style={{...S,fontSize:11,color:"#7A96BA"}}>{vRec}</p>
+        </div>}
+        {vf!==0&&<div style={{padding:"7px 10px",background:"#080D1A",borderRadius:6,border:"1px solid #FFC30030"}}>
+          <div style={{...M,fontSize:9,color:"#FFC300",letterSpacing:"0.08em",marginBottom:3}}>📊 VENUE SCORING FACTOR</div>
+          <p style={{...S,fontSize:11,color:"#7A96BA"}}>{venue}: {vf>0?"+":""}{vf} pts applied to O/U projection</p>
+        </div>}
+      </div>
+    </Acc>
+  </div>);
+};
+
+/* ── Settings panel ────────────────────────────────────────────────── */
+const Settings = ({oddsKey,onSave,onRefreshOdds,oddsLoading,lastOdds,oddsErr,onClose}) => {
+  const [val,setVal] = useState(oddsKey||"");
+  return(<div style={{background:"#080D1A",border:"1px solid #1C2D48",borderRadius:12,padding:"14px",marginBottom:12}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+      <div style={{...M,fontSize:10,color:"#7A96BA",letterSpacing:"0.1em"}}>⚙ SETTINGS</div>
+      <button onClick={onClose} style={{...M,fontSize:10,color:"#3D5878"}}>CLOSE ✕</button>
+    </div>
+    {/* The Odds API */}
+    <div style={{padding:"10px 12px",background:"#0C1525",border:"1px solid #1C2D48",borderRadius:8,marginBottom:10}}>
+      <div style={{...M,fontSize:10,color:"#CAFF00",letterSpacing:"0.08em",marginBottom:6}}>🔴 THE ODDS API — FREE LIVE ODDS</div>
+      <p style={{...S,fontSize:11,color:"#3D5878",lineHeight:1.6,marginBottom:8}}>
+        Sign up free at <strong style={{color:"#00E5FF"}}>the-odds-api.com</strong> (30 sec, no credit card). Filtered to <strong style={{color:"#CAFF00"}}>TAB only</strong>. 500 req/month free. Key is saved to your device.
+      </p>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:6}}>
+        <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onSave(val.trim())}
+          placeholder={oddsKey?"Key saved ✓ — paste to update":"Paste API key..."}
+          style={{flex:1,minWidth:160,background:"#05080F",border:"1px solid #253C5F",borderRadius:7,padding:"8px 12px",color:"#EAF0FF",fontSize:12}}/>
+        <button onClick={()=>onSave(val.trim())} style={{...M,background:"#CAFF00",color:"#000",padding:"8px 14px",borderRadius:7,fontWeight:700,fontSize:11,letterSpacing:"0.06em"}}>SAVE</button>
+        {oddsKey&&<button onClick={onRefreshOdds} disabled={oddsLoading} style={{...M,background:"#1C2D48",color:"#7A96BA",padding:"8px 12px",borderRadius:7,fontWeight:700,fontSize:11}}>
+          {oddsLoading?<Spinner size={11}/>:"↻ REFRESH"}
+        </button>}
+      </div>
+      {lastOdds&&<div style={{...M,fontSize:9,color:"#3D5878"}}>Last fetched: {lastOdds}</div>}
+      {oddsErr&&<div style={{...S,fontSize:11,color:"#FF3D3D",marginTop:4}}>⚠ {oddsErr}</div>}
+    </div>
+    {/* Hosting note */}
+    <div style={{padding:"10px 12px",background:"#0C1525",border:"1px solid #FFC30030",borderRadius:8}}>
+      <div style={{...M,fontSize:10,color:"#FFC300",letterSpacing:"0.08em",marginBottom:5}}>⚡ HOSTING REQUIRED FOR LIVE DATA</div>
+      <p style={{...S,fontSize:11,color:"#3D5878",lineHeight:1.7}}>
+        APIs need HTTPS. <strong style={{color:"#EAF0FF"}}>One-time setup:</strong> go to <strong style={{color:"#00E5FF"}}>netlify.com/drop</strong> in your browser, drag this HTML file in, get a permanent HTTPS URL, bookmark it on iPad. Free forever. Takes 30 seconds.
+      </p>
+    </div>
+  </div>);
+};
+
+/* ── Retro Round Card — extracted so useState is valid ─────────────── */
+const RetroRoundCard = ({r, allGames, sc, currentRound}) => {
+  const rGames  = allGames.filter(g=>g.round===r).sort((a,b)=>a.date<b.date?-1:1);
+  const done    = rGames.filter(g=>g.complete===100);
+  const rAna    = MANUAL_DATA[r]?.analysis||{};
+  const rLines  = MANUAL_DATA[r]?.ouLines||{};
+
+  // H2H accuracy
+  const tipped  = done.filter(g=>{ const tip=rAna[mk(g.hteam,g.ateam)]?.tip; return tip&&tip===g.winner; }).length;
+  const h2hPct  = done.length>0 ? Math.round(tipped/done.length*100) : null;
+  const h2hCol  = h2hPct==null?"#3D5878":h2hPct>=80?"#CAFF00":h2hPct>=65?"#FFC300":"#FF3D3D";
+
+  // Double accuracy (H2H tip correct AND O/U correct)
+  let dblT=0, dblC=0;
+  done.forEach(g=>{
+    const key    = mk(g.hteam,g.ateam);
+    const h2hTip = rAna[key]?.tip;
+    const line   = rLines[key];
+    if(!h2hTip||!line) return;
+    const p      = projTotal(g.hteam,g.ateam,g.venue||"",0,[],[],[],[],sc);
+    const ouTip  = p>line?"OVER":"UNDER";
+    const ouAct  = (g.hscore+g.ascore)>line?"OVER":"UNDER";
+    dblT++;
+    if(h2hTip===g.winner && ouTip===ouAct) dblC++;
+  });
+  const dblPct  = dblT>0 ? Math.round(dblC/dblT*100) : null;
+  const dblCol  = dblPct==null?"#3D5878":dblPct>=60?"#CAFF00":dblPct>=40?"#FFC300":"#FF3D3D";
+
+  const borderCol = h2hCol;
+  const [open,setOpen] = useState(r===currentRound);
+
+  return(<div style={{background:"#0C1525",border:`1px solid ${borderCol}30`,borderRadius:14,marginBottom:10,overflow:"hidden",boxShadow:`0 2px 16px ${borderCol}08`}}>
+    <button onClick={()=>setOpen(x=>!x)} style={{width:"100%",padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,background:open?borderCol+"08":"transparent",transition:"background .2s"}}>
+      {/* Left: round label + game count */}
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{...BD,fontSize:26,color:h2hPct!=null?h2hCol:"#EAF0FF",letterSpacing:"0.08em",textShadow:h2hPct!=null&&open?`0 0 16px ${h2hCol}60`:"none"}}>ROUND {r}</span>
+        {done.length<rGames.length&&<Pill label={done.length+"/"+rGames.length+" done"} col="#FFC300"/>}
+      </div>
+      {/* Right: H2H % + Double % + chevron */}
+      <div style={{display:"flex",alignItems:"center",gap:16}}>
+        {/* H2H accuracy */}
+        {h2hPct!=null&&<div style={{textAlign:"center"}}>
+          <div style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.1em",marginBottom:2}}>H2H</div>
+          <div style={{...BD,fontSize:28,color:h2hCol,textShadow:`0 0 16px ${h2hCol}50`,lineHeight:1}}>{h2hPct}%</div>
+          <div style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.04em"}}>{tipped}/{done.length}</div>
+        </div>}
+        {/* Divider */}
+        {h2hPct!=null&&dblPct!=null&&<div style={{width:1,height:36,background:"#1C2D48"}}/>}
+        {/* Double accuracy */}
+        {dblPct!=null&&<div style={{textAlign:"center"}}>
+          <div style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.1em",marginBottom:2}}>DOUBLE</div>
+          <div style={{...BD,fontSize:28,color:dblCol,textShadow:`0 0 16px ${dblCol}50`,lineHeight:1}}>{dblPct}%</div>
+          <div style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.04em"}}>{dblC}/{dblT}</div>
+        </div>}
+        <span style={{...M,fontSize:10,color:open?borderCol:"#3D5878",transition:"color .2s",marginLeft:4}}>{open?"▲":"▼"}</span>
+      </div>
+    </button>
+    {open&&<div className="fade">
+      <div style={{borderTop:"1px solid #1C2D4840"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 58px 1fr 20px 48px 80px",gap:4,padding:"6px 14px",...M,fontSize:9,color:"#3D5878",letterSpacing:"0.08em"}}>
+          <span>HOME</span><span style={{textAlign:"center"}}>RESULT</span><span style={{textAlign:"right"}}>AWAY</span><span style={{textAlign:"center"}}>H2H</span><span style={{textAlign:"right"}}>PROJ</span><span style={{textAlign:"center",color:"#FFC300"}}>H2H O/U DBL</span>
+        </div>
+        {rGames.map((g,i)=>{
+          const tip       = (rAna[mk(g.hteam,g.ateam)]||{}).tip;
+          const correct   = tip&&g.complete===100&&tip===g.winner;
+          const wrong     = tip&&g.complete===100&&tip!==g.winner;
+          const total     = g.complete===100&&g.hscore!=null&&g.ascore!=null?(g.hscore+g.ascore):null;
+          const p         = projTotal(g.hteam,g.ateam,g.venue||"",0,[],[],[],[],sc);
+          const diff      = p&&total?(p-total).toFixed(0):null;
+          const hcol      = TC[g.hteam]||"#334155";
+          const acol      = TC[g.ateam]||"#334155";
+          const ouLine      = (MANUAL_DATA[r]?.ouLines||{})[mk(g.hteam,g.ateam)]||null;
+          const ouTip       = p&&ouLine?(p>ouLine?"OVER":"UNDER"):null;
+          const ouActual    = total&&ouLine?(total>ouLine?"OVER":"UNDER"):null;
+          const ouCorrect   = ouTip&&ouActual&&ouTip===ouActual;
+          // Double = H2H tip correct AND O/U tip correct
+          const h2hTip      = (MANUAL_DATA[r]?.analysis||{})[mk(g.hteam,g.ateam)]?.tip||null;
+          const h2hCorrect  = h2hTip&&g.complete===100&&h2hTip===g.winner;
+          const doubleCorrect = h2hCorrect&&ouCorrect;
+          const doubleWrong   = g.complete===100&&ouLine&&h2hTip&&!(doubleCorrect);
+          const doubleLabel   = h2hTip&&ouTip&&ouLine ? `${ABBR[h2hTip]||h2hTip} + ${ouTip==="OVER"?"OVR":"UND"} ${ouLine}` : null;
+          return(<div key={i} className="row" style={{padding:"7px 14px",borderBottom:"1px solid #080D1A",transition:"background .15s"}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 58px 1fr 20px 48px 80px",gap:4,alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:3,height:26,background:hcol,borderRadius:2,flexShrink:0,boxShadow:`0 0 6px ${hcol}60`}}/>
+                <div>
+                  <div style={{...M,fontSize:11,fontWeight:700,color:g.complete===100&&g.winner===g.hteam?"#EEF3FF":"#3D5878"}}>{ABBR[g.hteam]||g.hteam}</div>
+                  {tip===g.hteam&&<div style={{...M,fontSize:8,color:"#CAFF00"}}>★ tipped</div>}
+                </div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                {g.complete===100
+                  ?<><div style={{...M,fontSize:11,fontWeight:700,color:wrong?"#FF3D3D":"#3D5878"}}>{g.margin!=null?"+"+g.margin:"?"}</div>
+                    <div style={{...M,fontSize:9,color:"#3D5878"}}>{total}pts</div></>
+                  :<div style={{...M,fontSize:9,color:"#3D5878"}}>upcoming</div>}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
+                <div style={{textAlign:"right"}}>
+                  <div style={{...M,fontSize:11,fontWeight:700,color:g.complete===100&&g.winner===g.ateam?"#EEF3FF":"#3D5878"}}>{ABBR[g.ateam]||g.ateam}</div>
+                  {tip===g.ateam&&<div style={{...M,fontSize:8,color:"#CAFF00",textAlign:"right"}}>★ tipped</div>}
+                </div>
+                <div style={{width:3,height:26,background:acol,borderRadius:2,flexShrink:0,boxShadow:`0 0 6px ${acol}60`}}/>
+              </div>
+              <div style={{textAlign:"center",...BD,fontSize:16,color:correct?"#CAFF00":wrong?"#FF3D3D":"#3D5878",textShadow:correct?"0 0 10px #CAFF0060":wrong?"0 0 10px #FF3D3D60":"none"}}>
+                {g.complete===100?(correct?"✓":wrong?"✗":"·"):"·"}
+              </div>
+              <div style={{textAlign:"right"}}>
+                {diff!=null&&<>
+                  <div style={{...M,fontSize:9,color:"#3D5878"}}>proj {p}</div>
+                  <div style={{...M,fontSize:9,color:Math.abs(+diff)>25?"#FFC300":"#3D5878"}}>{+diff>=0?"+":""}{diff}</div>
+                </>}
+              </div>
+              {/* H2H O/U Double result cell */}
+              <div style={{textAlign:"center"}}>
+                {doubleLabel?(
+                  <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                    <span style={{...M,fontSize:9,fontWeight:700,letterSpacing:"0.03em",
+                      color:doubleCorrect?"#CAFF00":doubleWrong?"#FF3D3D":"#FFC300",
+                      background:(doubleCorrect?"#CAFF00":doubleWrong?"#FF3D3D":"#FFC300")+"15",
+                      border:`1px solid ${doubleCorrect?"#CAFF00":doubleWrong?"#FF3D3D":"#FFC300"}30`,
+                      padding:"2px 6px",borderRadius:20,lineHeight:1.3,
+                      textShadow:doubleCorrect?"0 0 8px #CAFF0060":doubleWrong?"0 0 8px #FF3D3D50":"none"}}>
+                      {doubleLabel}
+                    </span>
+                    {g.complete===100&&ouLine&&(
+                      <span style={{...M,fontSize:12,
+                        color:doubleCorrect?"#CAFF00":doubleWrong?"#FF3D3D":"#3D5878",
+                        textShadow:doubleCorrect?"0 0 10px #CAFF0060":doubleWrong?"0 0 10px #FF3D3D60":"none"}}>
+                        {doubleCorrect?"✓":doubleWrong?"✗":""}
+                      </span>
+                    )}
+                    {g.complete<100&&ouLine&&<span style={{...M,fontSize:8,color:"#3D5878"}}>upcoming</span>}
+                    {!ouLine&&<span style={{...M,fontSize:8,color:"#1C2D48"}}>no line</span>}
+                  </div>
+                ):(
+                  <span style={{...M,fontSize:9,color:"#1C2D48"}}>—</span>
+                )}
+              </div>
+            </div>
+          </div>);
+        })}
+      </div>
+    </div>}
+  </div>);
+};
+
+/* ── Main App ──────────────────────────────────────────────────────── */
+function App() {
+  const [tab,setTab]           = useState("tips");
+  const [showSettings,setShowSettings] = useState(false);
+  const [selRound,setSelRound] = useState(null);
+
+  /* Squiggle state */
+  const [allGames,setAllGames]   = useState(()=>ls.get("afl_sq_games",STATIC_GAMES));
+  const [sqLoading,setSqLoading] = useState(false);
+  const [sqErr,setSqErr]         = useState(null);
+  const [sqTime,setSqTime]       = useState(()=>ls.get("afl_sq_time",null));
+  const [sqTips,setSqTips]       = useState({});
+
+  /* Odds API state */
+  const [oddsKey,setOddsKey]     = useState(()=>ls.get("afl_odds_key",""));
+  const [oddsData,setOddsData]   = useState(()=>ls.get("afl_odds_data",null));
+  const [oddsLoading,setOddsLoading] = useState(false);
+  const [oddsErr,setOddsErr]     = useState(null);
+  const [lastOdds,setLastOdds]   = useState(()=>ls.get("afl_odds_time",null));
+
+  /* Derived */
+  const sc = useMemo(() => allGames.length>0 ? calcRollingSC(allGames) : SEASON_BASE, [allGames]);
+
+  const currentRound = useMemo(() => {
+    if (allGames.length===0) return 10;
+    const max = Math.max(...allGames.map(g=>g.round||0));
+    for (let r=max; r>=1; r--) {
+      const rg = allGames.filter(g=>g.round===r);
+      if (rg.length>0 && rg.some(g=>g.complete<100)) return r;
+    }
+    return max;
+  }, [allGames]);
+
+  const round = selRound || currentRound;
+
+  const roundGames = useMemo(() =>
+    allGames.filter(g=>g.round===round).sort((a,b)=>a.date<b.date?-1:1)
+  , [allGames,round]);
+
+  const allRounds = useMemo(() => {
+    const rs = new Set(allGames.map(g=>g.round));
+    return [...rs].sort((a,b)=>b-a);
+  }, [allGames]);
+
+  /* Squiggle fetch */
+  const fetchSquiggle = useCallback(async () => {
+    setSqLoading(true); setSqErr(null);
+    try {
+      const games = await fetchSquiggleGames(2026);
+      setAllGames(games);
+      ls.set("afl_sq_games", games);
+      const t = new Date().toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"});
+      ls.set("afl_sq_time", t); setSqTime(t);
+    } catch(e) { setSqErr(e.message); }
+    setSqLoading(false);
+  }, []);
+
+  const fetchTipsForRound = useCallback(async (r) => {
+    try {
+      const tips = await fetchSquiggleTips(2026, r);
+      const m = {};
+      tips.forEach(t => { m[mk(t.hteam,t.ateam)] = t; });
+      setSqTips(m);
+    } catch(e) {}
+  }, []);
+
+  /* Odds fetch */
+  const fetchOdds = useCallback(async (key=oddsKey) => {
+    if (!key) return;
+    setOddsLoading(true); setOddsErr(null);
+    try {
+      const data = await fetchOddsAPI(key);
+      setOddsData(data); ls.set("afl_odds_data", data);
+      const t = new Date().toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"});
+      setLastOdds(t); ls.set("afl_odds_time", t);
+    } catch(e) { setOddsErr(e.message); }
+    setOddsLoading(false);
+  }, [oddsKey]);
+
+  const saveOddsKey = useCallback((k) => {
+    if (!k) return;
+    setOddsKey(k); ls.set("afl_odds_key", k);
+    setShowSettings(false);
+    fetchOdds(k);
+  }, [fetchOdds]);
+
+  /* On mount: fetch Squiggle if stale */
+  useEffect(() => {
+    const last = ls.get("afl_sq_time", null);
+    const stale = !last || (Date.now()-new Date("2026-01-01T"+last+":00").getTime()) > 3600000;
+    if (stale || allGames.length===0) fetchSquiggle();
+  }, []);
+
+  /* Fetch tips when round changes */
+  useEffect(() => { if(round) fetchTipsForRound(round); }, [round]);
+
+  /* Auto-fetch odds on mount if key exists */
+  useEffect(() => { if(oddsKey) fetchOdds(oddsKey); }, []);
+
+  /* Stats */
+  const completed = allGames.filter(g=>g.complete===100);
+  const oddsOn = !!oddsData && Object.keys(oddsData).length>0;
+
+  /* Round tips at-a-glance */
+  const glanceTips = roundGames.map(g => {
+    const key = mk(g.hteam,g.ateam);
+    return (MANUAL_DATA[round]?.analysis||{})[key]?.tip || null;
+  });
+
+  return(<div style={{minHeight:"100vh",background:"#05080F"}}>
+    {/* ── Header ── */}
+    <div style={{background:"linear-gradient(160deg,#0E1B38 0%,#0A1228 40%,#05080F 100%)",borderBottom:"1px solid #1C2D4860",padding:"20px 14px 16px",textAlign:"center",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",top:-40,left:"15%",width:200,height:200,borderRadius:"50%",background:"radial-gradient(circle,#CAFF0015 0%,transparent 70%)",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",top:-40,right:"15%",width:160,height:160,borderRadius:"50%",background:"radial-gradient(circle,#00E5FF10 0%,transparent 70%)",pointerEvents:"none"}}/>
+      <div style={{...BD,fontSize:48,letterSpacing:"0.12em",lineHeight:1,background:"linear-gradient(135deg,#CAFF00,#00E5FF)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>AFL TIPPER 2026</div>
+      <div style={{...M,fontSize:10,color:"#3D5878",letterSpacing:"0.18em",marginTop:4}}>AUTOMATED · SQUIGGLE + THE ODDS API · 6 IMPROVEMENTS ACTIVE</div>
+      <div style={{display:"flex",gap:5,justifyContent:"center",flexWrap:"wrap",marginTop:10}}>
+        <button onClick={fetchSquiggle} disabled={sqLoading} style={{display:"flex",alignItems:"center",gap:6,...M,
+          background:sqTime?"#CAFF0012":"#0C1525",border:`1px solid ${sqErr?"#FF3D3D50":sqTime?"#CAFF0050":"#1C2D48"}`,
+          color:sqErr?"#FF3D3D":sqTime?"#CAFF00":"#3D5878",
+          padding:"5px 14px",borderRadius:20,fontSize:10,letterSpacing:"0.08em",
+          boxShadow:sqTime?"0 0 16px #CAFF0020":"none",fontWeight:600}}>
+          {sqLoading?<><Spinner size={9}/>SYNCING</>:sqErr?"⚠ SQUIGGLE":sqTime?"◉ SQUIGGLE":"◌ SQUIGGLE"}
+        </button>
+        <button onClick={()=>oddsKey?fetchOdds():setShowSettings(true)} style={{display:"flex",alignItems:"center",gap:6,...M,
+          background:oddsOn?"#FF3D3D12":"#0C1525",border:`1px solid ${oddsOn?"#FF3D3D50":oddsErr?"#FF3D3D50":"#1C2D48"}`,
+          color:oddsOn?"#FF5555":oddsErr?"#FF3D3D":oddsLoading?"#FFC300":"#3D5878",
+          padding:"5px 14px",borderRadius:20,fontSize:10,letterSpacing:"0.08em",
+          boxShadow:oddsOn?"0 0 16px #FF3D3D20":"none",fontWeight:600}}>
+          {oddsLoading?<><Spinner size={9} col="#FF5555"/>LOADING</>:oddsOn?"● TAB LIVE":oddsErr?"⚠ ODDS ERR":"○ ADD TAB ODDS KEY"}
+        </button>
+        <button onClick={()=>setShowSettings(s=>!s)} style={{...M,
+          background:showSettings?"#00E5FF15":"#0C1525",border:`1px solid ${showSettings?"#00E5FF50":"#1C2D48"}`,color:showSettings?"#00E5FF":"#3D5878",
+          padding:"5px 14px",borderRadius:20,fontSize:10,letterSpacing:"0.08em",fontWeight:600}}>
+          ⚙ SETTINGS
+        </button>
+      </div>
+    </div>
+
+    <div style={{maxWidth:720,margin:"0 auto",padding:"10px 14px 0"}}>
+      {/* Settings */}
+      {showSettings&&<Settings oddsKey={oddsKey} onSave={saveOddsKey} onRefreshOdds={()=>fetchOdds()} oddsLoading={oddsLoading} lastOdds={lastOdds} oddsErr={oddsErr} onClose={()=>setShowSettings(false)}/>}
+
+      {/* Squiggle error */}
+      {sqErr&&!sqLoading&&<div style={{...S,background:"#080D1A",border:"1px solid #FF3D3D40",borderRadius:8,padding:"10px 12px",marginBottom:10,fontSize:11,color:"#FFC300"}}>
+        {location.protocol==="https:"
+          ? `📊 Squiggle sync failed: ${sqErr}. Using embedded data.`
+          : "📊 Local file — Squiggle needs HTTPS. Using embedded data."
+        } <button onClick={fetchSquiggle} style={{color:"#00E5FF",textDecoration:"underline",marginLeft:4}}>Retry</button>
+      </div>}
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:6,marginBottom:12,padding:"3px",background:"#08111F",borderRadius:14,border:"1px solid #1C2D48"}}>
+        {[["tips","🏉 ROUND "+round],["retro","📊 RETROSPECTIVE"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"10px 0",borderRadius:11,...M,fontSize:11,fontWeight:700,letterSpacing:"0.08em",
+            background:tab===k?"linear-gradient(135deg,#CAFF00,#80FF00)":"transparent",
+            color:tab===k?"#000":"#3D5878",border:"none",
+            boxShadow:tab===k?"0 0 20px #CAFF0040":"none",
+            transition:"all .2s"}}>{l}</button>
+        ))}
+      </div>
+
+      {/* ── TIPS ── */}
+      {tab==="tips"&&<>
+        {/* Round selector */}
+        {allRounds.length>0&&<div style={{display:"flex",gap:5,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+          <span style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.06em"}}>ROUND</span>
+          {[...Array(Math.max(...allRounds))].map((_,i)=>{
+            const r=i+1;
+            if (!allRounds.includes(r)&&r!==currentRound) return null;
+            return(<button key={r} onClick={()=>setSelRound(r)} style={{...M,fontSize:10,padding:"2px 8px",borderRadius:5,background:round===r?"#1C2D48":"transparent",color:round===r?"#EAF0FF":r===currentRound?"#7A96BA":"#3D5878",border:round===r?"1px solid #253C5F":"1px solid transparent",fontWeight:r===currentRound?700:400}}>{r}</button>);
+          })}
+          {sqLoading&&<Spinner size={10}/>}
+        </div>}
+
+        {/* Data status banner */}
+        <div style={{background:"#080D1A",border:"1px solid #1C2D48",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+            <Pill label={sqTime?"◉ SQUIGGLE "+sqTime:"◌ SQUIGGLE"} col={sqTime?"#CAFF00":"#3D5878"}/>
+            <Pill label={sc["Sydney"]?.n?`${sc["Sydney"].n}G ROLLING SC`:"SEASON AVG SC"} col="#00E5FF"/>
+            <Pill label={oddsOn?"● TAB LIVE":"○ NO ODDS"} col={oddsOn?"#FF5555":"#3D5878"}/>
+            {!oddsOn&&!oddsLoading&&<span style={{...M,fontSize:9,color:"#FFC300",letterSpacing:"0.06em"}}>+ ADD ODDS KEY IN SETTINGS</span>}
+          </div>
+        </div>
+
+                {/* Tips summary table */}
+        {roundGames.length>0&&<div style={{background:"#08111F",border:"1px solid #1C2D48",borderRadius:14,padding:"14px 16px",marginBottom:12}}>
+          <div style={{...BD,fontSize:22,color:"#EAF0FF",letterSpacing:"0.12em",marginBottom:12}}>ROUND {round} · TIPS SUMMARY</div>
+          {/* Column headers */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 76px 1fr",gap:8,marginBottom:4,padding:"0 2px"}}>
+            <span style={{...M,fontSize:9,color:"#3D5878",letterSpacing:"0.1em"}}>GAME</span>
+            <span style={{...M,fontSize:9,color:"#CAFF00",letterSpacing:"0.1em",textAlign:"center"}}>H2H TIP</span>
+            <span style={{...M,fontSize:9,color:"#FFC300",letterSpacing:"0.1em",textAlign:"right"}}>H2H O/U DOUBLE</span>
+          </div>
+          {roundGames.map((g,i)=>{
+            const key    = mk(g.hteam,g.ateam);
+            const rAna   = (MANUAL_DATA[round]?.analysis||{})[key]||null;
+            const tip    = rAna?.tip||null;
+            const ouLine = (MANUAL_DATA[round]?.ouLines||{})[key]||null;
+            const wx     = (MANUAL_DATA[round]?.weather||{})[key]||{adj:0};
+            const hSq    = (MANUAL_DATA[round]?.squads||{})[g.hteam]||{ins:[],outs:[]};
+            const aSq    = (MANUAL_DATA[round]?.squads||{})[g.ateam]||{ins:[],outs:[]};
+            const p      = projTotal(g.hteam,g.ateam,g.venue||"",wx.adj,hSq.ins,hSq.outs,aSq.ins,aSq.outs,sc);
+            const ouTip  = p&&ouLine?(p>ouLine?"OVR":"UND"):null;
+            const tipCol = TC[tip]||"#3D5878";
+            const done   = g.complete===100;
+            const h2hOk  = done&&tip&&g.winner===tip;
+            const h2hNo  = done&&tip&&g.winner!==tip;
+            const dblOk  = done&&ouLine&&ouTip&&(()=>{const ouAct=(g.hscore+g.ascore)>ouLine?"OVR":"UND";return h2hOk&&ouTip===ouAct;})();
+            const dblNo  = done&&ouLine&&ouTip&&!dblOk;
+            return(<div key={i} style={{display:"grid",gridTemplateColumns:"1fr 76px 1fr",gap:8,
+              padding:"8px 2px",borderTop:"1px solid #1C2D4840",alignItems:"center"}}>
+              {/* Game */}
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:2,height:18,background:TC[g.hteam]||"#334155",borderRadius:1,flexShrink:0}}/>
+                <span style={{...M,fontSize:10,color:"#7A96BA"}}>
+                  {ABBR[g.hteam]} <span style={{color:"#3D5878",fontSize:8}}>v</span> {ABBR[g.ateam]}
+                </span>
+                {done&&<span style={{...M,fontSize:8,color:"#3D5878",marginLeft:2}}>{g.hscore}-{g.ascore}</span>}
+              </div>
+              {/* H2H tip */}
+              <div style={{textAlign:"center"}}>
+                {tip?(
+                  <span style={{...M,fontSize:11,fontWeight:700,
+                    color:h2hOk?"#CAFF00":h2hNo?"#FF3D3D":tipCol,
+                    background:(h2hOk?"#CAFF00":h2hNo?"#FF3D3D":tipCol)+"18",
+                    border:`1px solid ${h2hOk?"#CAFF00":h2hNo?"#FF3D3D":tipCol}40`,
+                    padding:"2px 8px",borderRadius:20,
+                    textShadow:h2hOk?"0 0 10px #CAFF0060":h2hNo?"0 0 10px #FF3D3D50":"none"}}>
+                    {ABBR[tip]||tip}{h2hOk?" ✓":h2hNo?" ✗":""}
+                  </span>
+                ):<span style={{...M,fontSize:9,color:"#3D5878"}}>—</span>}
+              </div>
+              {/* Double */}
+              <div style={{textAlign:"right"}}>
+                {tip&&ouTip&&ouLine?(
+                  <span style={{...M,fontSize:10,fontWeight:600,letterSpacing:"0.02em",
+                    color:dblOk?"#CAFF00":dblNo?"#FF3D3D":"#FFC300",
+                    background:(dblOk?"#CAFF00":dblNo?"#FF3D3D":"#FFC300")+"15",
+                    border:`1px solid ${dblOk?"#CAFF00":dblNo?"#FF3D3D":"#FFC300"}40`,
+                    padding:"2px 8px",borderRadius:20,
+                    textShadow:dblOk?"0 0 10px #CAFF0060":dblNo?"0 0 10px #FF3D3D50":"none"}}>
+                    {ABBR[tip]} + {ouTip} {ouLine}{dblOk?" ✓":dblNo?" ✗":""}
+                  </span>
+                ):<span style={{...M,fontSize:9,color:"#3D5878"}}>—</span>}
+              </div>
+            </div>);
+          })}
+        </div>}
+
+        {/* No data */}
+        {roundGames.length===0&&!sqLoading&&<div style={{textAlign:"center",padding:"40px 20px"}}>
+          <div style={{...M,fontSize:14,color:"#3D5878",marginBottom:8}}>No fixture data for Round {round}</div>
+          <button onClick={fetchSquiggle} style={{...M,background:"#CAFF00",color:"#000",padding:"8px 16px",borderRadius:8,fontWeight:700,fontSize:11}}>↻ FETCH FROM SQUIGGLE</button>
+        </div>}
+        {sqLoading&&roundGames.length===0&&<div style={{textAlign:"center",padding:"40px"}}><Spinner size={24}/><div style={{...M,fontSize:11,color:"#3D5878",marginTop:12}}>Loading from Squiggle...</div></div>}
+
+        {/* Game cards */}
+        {roundGames.map((g,i)=>(
+          <GameCard key={i} game={g} round={round} sc={sc} oddsData={oddsData} sqTip={sqTips[mk(g.hteam,g.ateam)]}/>
+        ))}
+
+        {roundGames.length>0&&<div style={{textAlign:"center",marginTop:12,...M,fontSize:9,color:"#3D5878",letterSpacing:"0.04em"}}>
+          FIXTURES & RESULTS: SQUIGGLE API · ODDS: TAB (via The Odds API) · SQUAD NEWS: MANUAL UPDATE EACH ROUND
+        </div>}
+      </>}
+
+      {/* ── RETROSPECTIVE ── */}
+      {tab==="retro"&&<>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
+          {(()=>{
+            // H2H accuracy across all rounds with tips
+            let h2hT=0,h2hC=0,dblT=0,dblC=0;
+            allRounds.forEach(r=>{
+              const rAna=MANUAL_DATA[r]?.analysis||{};
+              const rLines=MANUAL_DATA[r]?.ouLines||{};
+              allGames.filter(g=>g.round===r&&g.complete===100&&g.hscore!=null).forEach(g=>{
+                const key=mk(g.hteam,g.ateam);
+                const h2hTip=rAna[key]?.tip;
+                if(h2hTip){h2hT++;if(h2hTip===g.winner)h2hC++;}
+                const line=rLines[key];
+                if(h2hTip&&line){
+                  const sc2=allGames.length>0?calcRollingSC(allGames):SEASON_BASE;
+                  const p=projTotal(g.hteam,g.ateam,g.venue||"",0,[],[],[],[],sc2);
+                  const ouTip=p&&p>line?"OVER":"UNDER";
+                  const ouAct=(g.hscore+g.ascore)>line?"OVER":"UNDER";
+                  dblT++;if(h2hTip===g.winner&&ouTip===ouAct)dblC++;
+                }
+              });
+            });
+            const h2hPct  = h2hT>0?Math.round(h2hC/h2hT*100):null;
+            const dblPct  = dblT>0?Math.round(dblC/dblT*100):null;
+            const avgTotal= completed.length?Math.round(completed.reduce((s,g)=>s+(g.hscore||0)+(g.ascore||0),0)/completed.length):null;
+            return [
+              {label:"H2H ACCURACY",   value:h2hPct!=null?h2hPct+"%":"—",  sub:`${h2hC} of ${h2hT} correct`,  col:h2hPct==null?"#3D5878":h2hPct>=75?"#CAFF00":h2hPct>=60?"#FFC300":"#FF3D3D"},
+              {label:"DOUBLE ACCURACY",value:dblPct!=null?dblPct+"%":"—",  sub:`${dblC} of ${dblT} correct`,  col:dblPct==null?"#3D5878":dblPct>=60?"#CAFF00":dblPct>=45?"#FFC300":"#FF3D3D"},
+              {label:"GAMES COMPLETE", value:completed.length,              sub:`${allRounds.length} rounds`,   col:"#00E5FF"},
+              {label:"AVG TOTAL",      value:avgTotal!=null?avgTotal+"pts":"—",sub:"per game",                col:"#7A96BA"},
+            ];
+          })().map(({label,value,sub,col})=>(
+            <div key={label} style={{background:`linear-gradient(135deg,${col}12,${col}05)`,border:`1px solid ${col}30`,borderRadius:12,padding:"12px 14px",flex:1,minWidth:80,boxShadow:`0 0 20px ${col}10`}}>
+              <div style={{...M,fontSize:8,color:"#3D5878",letterSpacing:"0.1em",marginBottom:5}}>{label}</div>
+              <div style={{...BD,fontSize:28,color:col,lineHeight:1,textShadow:`0 0 20px ${col}50`}}>{value}</div>
+              <div style={{...S,fontSize:9,color:"#3D5878",marginTop:3}}>{sub}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{background:"#080D1A",border:"1px solid #CAFF0030",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+          <div style={{...M,fontSize:10,color:"#CAFF00",letterSpacing:"0.08em",marginBottom:4}}>🔄 FULLY AUTOMATED</div>
+          <div style={{...S,fontSize:11,color:"#3D5878",lineHeight:1.6}}>
+            Results and scores fetched from Squiggle API automatically on each load. Rolling SC averages update as results come in. No manual data entry needed for results.
+            {sqTime&&<span style={{color:"#CAFF00"}}> Last sync: {sqTime}</span>}
+          </div>
+        </div>
+
+        {allRounds.length===0&&!sqLoading&&<div style={{textAlign:"center",padding:"40px"}}>
+          <button onClick={fetchSquiggle} style={{...M,background:"#CAFF00",color:"#000",padding:"8px 16px",borderRadius:8,fontWeight:700,fontSize:11}}>↻ FETCH FROM SQUIGGLE</button>
+        </div>}
+        {sqLoading&&<div style={{textAlign:"center",padding:"40px"}}><Spinner size={24}/><div style={{...M,fontSize:11,color:"#3D5878",marginTop:12}}>Loading results...</div></div>}
+
+        {allRounds.map(r => (
+          <RetroRoundCard key={r} r={r} allGames={allGames} sc={sc} currentRound={currentRound}/>
+        ))}
+      </>}
+
+      <div style={{height:48}}/>
+    </div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
